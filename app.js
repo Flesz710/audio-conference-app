@@ -53,6 +53,10 @@ class AudioConference {
         this.socket.on('joined-room', (data) => {
             this.currentRoom = data.roomId;
             this.currentRoomSpan.textContent = data.roomId;
+            
+            // Скрываем секцию подключения и показываем конференцию
+            const roomSection = document.querySelector('.room-section');
+            roomSection.style.display = 'none';
             this.conferenceSection.style.display = 'block';
             this.conferenceSection.classList.add('fade-in');
             this.updateStatus('connected', `В комнате: ${data.roomId}`);
@@ -110,13 +114,16 @@ class AudioConference {
         this.updateStatus('connecting', 'Подключение к комнате...');
 
         try {
-            // Получаем доступ к микрофону
+            // Получаем доступ к микрофону с улучшенными настройками
             console.log('Запрашиваем доступ к микрофону...');
             this.localStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
-                    autoGainControl: true
+                    autoGainControl: true,
+                    sampleRate: 48000,
+                    channelCount: 1,
+                    latency: 0.01
                 }
             });
 
@@ -358,6 +365,17 @@ class AudioConference {
         if (audioElement) {
             audioElement.srcObject = stream;
             audioElement.volume = 1.0; // Устанавливаем максимальную громкость
+            
+            // Настройка для автоматического переключения на наушники
+            audioElement.setSinkId = audioElement.setSinkId || audioElement.webkitSetSinkId;
+            if (audioElement.setSinkId) {
+                // Пытаемся переключиться на наушники если доступны
+                this.setupAudioSink(audioElement);
+            }
+            
+            // Настройка для обнаружения речи и предотвращения эха
+            this.setupAudioDetection(audioElement, userId);
+            
             console.log('Аудио элемент обновлен:', audioElement);
             
             // Добавляем обработчики для отладки
@@ -389,6 +407,92 @@ class AudioConference {
             }, 1000);
         } else {
             console.error('Аудио элемент не найден для участника:', userId);
+        }
+    }
+
+    setupAudioDetection(audioElement, userId) {
+        try {
+            // Создаем AudioContext для анализа звука
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const source = audioContext.createMediaElementSource(audioElement);
+            const analyser = audioContext.createAnalyser();
+            
+            analyser.fftSize = 256;
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            
+            source.connect(analyser);
+            analyser.connect(audioContext.destination);
+            
+            // Функция для обнаружения речи
+            const detectSpeech = () => {
+                analyser.getByteFrequencyData(dataArray);
+                
+                // Вычисляем средний уровень звука
+                let sum = 0;
+                for (let i = 0; i < bufferLength; i++) {
+                    sum += dataArray[i];
+                }
+                const average = sum / bufferLength;
+                
+                // Если звук достаточно громкий, считаем что кто-то говорит
+                if (average > 30) {
+                    this.handleRemoteSpeech(userId);
+                }
+                
+                requestAnimationFrame(detectSpeech);
+            };
+            
+            detectSpeech();
+        } catch (error) {
+            console.log('Не удалось настроить обнаружение речи:', error);
+        }
+    }
+
+    handleRemoteSpeech(speakingUserId) {
+        // Если кто-то другой говорит, временно приглушаем наш микрофон
+        if (speakingUserId !== this.socket.id && this.localStream && !this.isMuted) {
+            const audioTracks = this.localStream.getAudioTracks();
+            audioTracks.forEach(track => {
+                // Временно снижаем громкость для предотвращения эха
+                if (track.applyConstraints) {
+                    track.applyConstraints({ volume: 0.3 });
+                }
+            });
+            
+            // Восстанавливаем громкость через 2 секунды
+            setTimeout(() => {
+                if (this.localStream && !this.isMuted) {
+                    const audioTracks = this.localStream.getAudioTracks();
+                    audioTracks.forEach(track => {
+                        if (track.applyConstraints) {
+                            track.applyConstraints({ volume: 1.0 });
+                        }
+                    });
+                }
+            }, 2000);
+        }
+    }
+
+    async setupAudioSink(audioElement) {
+        try {
+            // Получаем список доступных аудио устройств
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioOutputs = devices.filter(device => device.kind === 'audiooutput');
+            
+            // Ищем наушники или гарнитуру
+            const headphones = audioOutputs.find(device => 
+                device.label.toLowerCase().includes('headphone') ||
+                device.label.toLowerCase().includes('headset') ||
+                device.label.toLowerCase().includes('earphone')
+            );
+            
+            if (headphones && audioElement.setSinkId) {
+                await audioElement.setSinkId(headphones.deviceId);
+                console.log('Переключились на наушники:', headphones.label);
+            }
+        } catch (error) {
+            console.log('Не удалось переключиться на наушники:', error);
         }
     }
 
@@ -436,7 +540,9 @@ class AudioConference {
             // Покидаем комнату
             this.socket.emit('leave-room');
             
-            // Скрываем интерфейс конференции
+            // Показываем секцию подключения и скрываем конференцию
+            const roomSection = document.querySelector('.room-section');
+            roomSection.style.display = 'block';
             this.conferenceSection.style.display = 'none';
             this.currentRoom = null;
             
