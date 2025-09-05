@@ -56,6 +56,13 @@ class AudioConference {
             this.conferenceSection.style.display = 'block';
             this.conferenceSection.classList.add('fade-in');
             this.updateStatus('connected', `В комнате: ${data.roomId}`);
+            
+            // Создаем offer для всех существующих участников
+            data.participants.forEach(participant => {
+                if (participant.id !== this.socket.id) {
+                    this.createOfferForParticipant(participant.id);
+                }
+            });
         });
 
         this.socket.on('room-participants', (participants) => {
@@ -64,7 +71,7 @@ class AudioConference {
 
         this.socket.on('user-joined', (user) => {
             this.addParticipant(user);
-            this.createPeerConnection(user.id);
+            // НЕ создаем peer connection здесь - это будет сделано при получении offer
         });
 
         this.socket.on('user-left', (userId) => {
@@ -191,7 +198,15 @@ class AudioConference {
             console.log('ICE состояние для', userId, ':', peerConnection.iceConnectionState);
         };
 
-        // Создаем offer для нового пользователя
+        // НЕ создаем offer здесь - это будет сделано в handleOffer
+        console.log('Peer connection создан для:', userId);
+    }
+
+    async createOfferForParticipant(userId) {
+        console.log('Создаем offer для участника:', userId);
+        await this.createPeerConnection(userId);
+        const peerConnection = this.peerConnections.get(userId);
+        
         try {
             const offer = await peerConnection.createOffer();
             await peerConnection.setLocalDescription(offer);
@@ -200,8 +215,9 @@ class AudioConference {
                 target: userId,
                 offer: offer
             });
+            console.log('Отправлен offer для:', userId);
         } catch (error) {
-            console.error('Ошибка создания offer:', error);
+            console.error('Ошибка создания offer для:', userId, error);
         }
     }
 
@@ -216,22 +232,30 @@ class AudioConference {
         }
 
         try {
-            // Проверяем состояние соединения
-            if (peerConnection.signalingState === 'stable') {
-                console.log('Устанавливаем remote description для:', senderId);
-                await peerConnection.setRemoteDescription(offer);
+            console.log('Устанавливаем remote description для:', senderId);
+            await peerConnection.setRemoteDescription(offer);
 
-                const answer = await peerConnection.createAnswer();
-                await peerConnection.setLocalDescription(answer);
-
-                this.socket.emit('answer', {
-                    target: senderId,
-                    answer: answer
-                });
-                console.log('Отправлен answer для:', senderId);
-            } else {
-                console.log('Пропускаем offer - неподходящее состояние:', peerConnection.signalingState);
+            // Добавляем отложенные ICE кандидаты
+            if (peerConnection.pendingIceCandidates) {
+                console.log('Добавляем отложенные ICE кандидаты для:', senderId);
+                for (const candidate of peerConnection.pendingIceCandidates) {
+                    try {
+                        await peerConnection.addIceCandidate(candidate);
+                    } catch (error) {
+                        console.error('Ошибка добавления отложенного ICE кандидата:', error);
+                    }
+                }
+                peerConnection.pendingIceCandidates = [];
             }
+
+            const answer = await peerConnection.createAnswer();
+            await peerConnection.setLocalDescription(answer);
+
+            this.socket.emit('answer', {
+                target: senderId,
+                answer: answer
+            });
+            console.log('Отправлен answer для:', senderId);
         } catch (error) {
             console.error('Ошибка обработки offer:', error);
         }
@@ -242,13 +266,8 @@ class AudioConference {
         const peerConnection = this.peerConnections.get(senderId);
         if (peerConnection) {
             try {
-                // Проверяем состояние соединения
-                if (peerConnection.signalingState === 'have-local-offer') {
-                    console.log('Устанавливаем remote answer для:', senderId);
-                    await peerConnection.setRemoteDescription(answer);
-                } else {
-                    console.log('Пропускаем answer - неподходящее состояние:', peerConnection.signalingState);
-                }
+                console.log('Устанавливаем remote answer для:', senderId);
+                await peerConnection.setRemoteDescription(answer);
             } catch (error) {
                 console.error('Ошибка обработки answer:', error);
             }
@@ -256,9 +275,25 @@ class AudioConference {
     }
 
     async handleIceCandidate(candidate, senderId) {
+        console.log('Обрабатываем ICE кандидат от:', senderId);
         const peerConnection = this.peerConnections.get(senderId);
         if (peerConnection) {
-            await peerConnection.addIceCandidate(candidate);
+            try {
+                // Проверяем, что remote description установлен
+                if (peerConnection.remoteDescription) {
+                    console.log('Добавляем ICE кандидат для:', senderId);
+                    await peerConnection.addIceCandidate(candidate);
+                } else {
+                    console.log('Откладываем ICE кандидат - remote description не установлен для:', senderId);
+                    // Сохраняем кандидат для последующего добавления
+                    if (!peerConnection.pendingIceCandidates) {
+                        peerConnection.pendingIceCandidates = [];
+                    }
+                    peerConnection.pendingIceCandidates.push(candidate);
+                }
+            } catch (error) {
+                console.error('Ошибка добавления ICE кандидата:', error);
+            }
         }
     }
 
