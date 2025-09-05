@@ -8,7 +8,6 @@ class AudioConference {
         this.isMuted = false;
         this.isNearEar = false;
         this.currentAudioSink = null;
-        this.isSpeakerMode = false; // false = разговорный динамик, true = громкая связь
         
         this.initializeElements();
         this.setupEventListeners();
@@ -24,7 +23,6 @@ class AudioConference {
         this.currentRoomSpan = document.getElementById('currentRoom');
         this.participantsDiv = document.getElementById('participants');
         this.muteBtn = document.getElementById('muteBtn');
-        this.speakerBtn = document.getElementById('speakerBtn');
         this.leaveBtn = document.getElementById('leaveBtn');
         this.statusIndicator = document.querySelector('.status-indicator');
         this.statusText = document.querySelector('.status-text');
@@ -33,7 +31,6 @@ class AudioConference {
     setupEventListeners() {
         this.joinRoomBtn.addEventListener('click', () => this.joinRoom());
         this.muteBtn.addEventListener('click', () => this.toggleMute());
-        this.speakerBtn.addEventListener('click', () => this.toggleSpeaker());
         this.leaveBtn.addEventListener('click', () => this.leaveRoom());
 
         // Enter для присоединения к комнате
@@ -123,27 +120,17 @@ class AudioConference {
     }
 
     handleProximityChange(isNear) {
-        console.log('Изменение приближения:', isNear, 'Режим громкой связи:', this.isSpeakerMode);
+        console.log('Изменение приближения:', isNear);
         
         if (isNear !== this.isNearEar) {
             this.isNearEar = isNear;
             
-            // Переключаем только если НЕ в режиме громкой связи
-            if (!this.isSpeakerMode) {
-                if (isNear) {
-                    // Телефон поднесен к уху - переключаемся на разговорный динамик
-                    this.switchToEarpiece();
-                } else {
-                    // Телефон убран от уха - переключаемся на обычный динамик
-                    this.switchToSpeaker();
-                }
+            if (isNear) {
+                // Телефон поднесен к уху - переключаемся на разговорный динамик
+                this.switchToEarpiece();
             } else {
-                // В режиме громкой связи только затемняем/освещаем экран
-                if (isNear) {
-                    this.dimScreen(true);
-                } else {
-                    this.dimScreen(false);
-                }
+                // Телефон убран от уха - переключаемся на обычный динамик
+                this.switchToSpeaker();
             }
         }
     }
@@ -219,9 +206,13 @@ class AudioConference {
             if (touchDuration < 500 && touchDistance < 50 && touchStartY < 200) {
                 touchCount++;
                 
-                // Двойное касание в верхней части экрана = переключение громкой связи
+                // Двойное касание в верхней части экрана = переключение аудио
                 if (touchCount === 2) {
-                    this.toggleSpeaker();
+                    if (this.currentAudioSink === 'earpiece') {
+                        this.switchToSpeaker();
+                    } else {
+                        this.switchToEarpiece();
+                    }
                     touchCount = 0;
                 }
                 
@@ -371,35 +362,6 @@ class AudioConference {
         }
     }
 
-    toggleSpeaker() {
-        this.isSpeakerMode = !this.isSpeakerMode;
-        console.log('Переключение режима громкой связи:', this.isSpeakerMode);
-        
-        if (this.isSpeakerMode) {
-            // Включаем громкую связь - переключаемся на обычный динамик
-            this.switchToSpeaker();
-            this.updateSpeakerButton();
-        } else {
-            // Выключаем громкую связь - переключаемся на разговорный динамик
-            this.switchToEarpiece();
-            this.updateSpeakerButton();
-        }
-    }
-
-    updateSpeakerButton() {
-        const icon = this.speakerBtn.querySelector('.icon');
-        const text = this.speakerBtn.querySelector('.text');
-        
-        if (this.isSpeakerMode) {
-            icon.textContent = '🔊';
-            text.textContent = 'Громкая связь';
-            this.speakerBtn.classList.add('active');
-        } else {
-            icon.textContent = '📞';
-            text.textContent = 'Громкая связь';
-            this.speakerBtn.classList.remove('active');
-        }
-    }
 
 
     dimScreen(shouldDim) {
@@ -475,8 +437,6 @@ class AudioConference {
                 }
             }
             
-            // Обновляем кнопку громкой связи
-            this.updateSpeakerButton();
         } catch (error) {
             console.log('Ошибка инициализации аудио по умолчанию:', error);
         }
@@ -528,6 +488,11 @@ class AudioConference {
 
         this.socket.on('user-muted', (data) => {
             this.updateParticipantMute(data.id, data.isMuted);
+        });
+
+        this.socket.on('left-room', () => {
+            console.log('Подтверждение выхода из комнаты получено');
+            this.updateStatus('connected', 'Готов к подключению');
         });
 
         // WebRTC сигналы
@@ -981,8 +946,11 @@ class AudioConference {
     }
 
     leaveRoom() {
+        console.log('🚪 Покидаем комнату:', this.currentRoom);
+        
         if (this.currentRoom) {
             // Закрываем все peer connections
+            console.log('🔌 Закрываем peer connections:', this.peerConnections.size);
             this.peerConnections.forEach((pc, userId) => {
                 pc.close();
             });
@@ -990,31 +958,39 @@ class AudioConference {
 
             // Останавливаем локальный поток
             if (this.localStream) {
+                console.log('🎤 Останавливаем локальный поток');
                 this.localStream.getTracks().forEach(track => track.stop());
                 this.localStream = null;
             }
 
             // Сбрасываем состояние
             this.isMuted = false;
-            this.isSpeakerMode = false;
             this.isNearEar = false;
             this.currentAudioSink = null;
             this.updateMuteButton();
-            this.updateSpeakerButton();
             
             // Убираем затемнение экрана
             this.dimScreen(false);
 
             // Покидаем комнату
-            this.socket.emit('leave-room');
+            console.log('📤 Отправляем leave-room на сервер');
+            this.socket.emit('leave-room', { roomId: this.currentRoom });
             
             // Показываем секцию подключения и скрываем конференцию
             const roomSection = document.querySelector('.room-section');
-            roomSection.style.display = 'block';
-            this.conferenceSection.style.display = 'none';
-            this.currentRoom = null;
+            if (roomSection) {
+                roomSection.style.display = 'block';
+            }
+            if (this.conferenceSection) {
+                this.conferenceSection.style.display = 'none';
+            }
             
+            this.currentRoom = null;
             this.updateStatus('connected', 'Готов к подключению');
+            
+            console.log('✅ Выход из комнаты завершен');
+        } else {
+            console.log('⚠️ Нет активной комнаты для выхода');
         }
     }
 
