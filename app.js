@@ -23,7 +23,6 @@ class AudioConference {
         this.currentRoomSpan = document.getElementById('currentRoom');
         this.participantsDiv = document.getElementById('participants');
         this.muteBtn = document.getElementById('muteBtn');
-        this.audioOutputBtn = document.getElementById('audioOutputBtn');
         this.leaveBtn = document.getElementById('leaveBtn');
         this.statusIndicator = document.querySelector('.status-indicator');
         this.statusText = document.querySelector('.status-text');
@@ -32,7 +31,6 @@ class AudioConference {
     setupEventListeners() {
         this.joinRoomBtn.addEventListener('click', () => this.joinRoom());
         this.muteBtn.addEventListener('click', () => this.toggleMute());
-        this.audioOutputBtn.addEventListener('click', () => this.toggleAudioOutput());
         this.leaveBtn.addEventListener('click', () => this.leaveRoom());
 
         // Enter для присоединения к комнате
@@ -44,21 +42,79 @@ class AudioConference {
         });
     }
 
-    setupProximitySensor() {
-        // Проверяем поддержку датчика приближения
-        if ('ondeviceproximity' in window || 'onuserproximity' in window) {
-            console.log('Датчик приближения доступен');
-            
-            // Слушаем изменения датчика приближения
+    async setupProximitySensor() {
+        console.log('Настройка датчика приближения...');
+        
+        // Запрашиваем разрешения для датчиков
+        try {
+            if ('permissions' in navigator) {
+                const permission = await navigator.permissions.query({ name: 'accelerometer' });
+                console.log('Разрешение на акселерометр:', permission.state);
+                
+                const lightPermission = await navigator.permissions.query({ name: 'ambient-light-sensor' });
+                console.log('Разрешение на датчик света:', lightPermission.state);
+            }
+        } catch (error) {
+            console.log('Ошибка запроса разрешений:', error);
+        }
+        
+        // Проверяем поддержку различных API датчика приближения
+        if ('ondeviceproximity' in window) {
+            console.log('deviceproximity API доступен');
             window.addEventListener('deviceproximity', (event) => {
-                this.handleProximityChange(event.value);
+                console.log('deviceproximity event:', event.value);
+                this.handleProximityChange(event.value < 5); // Близко если меньше 5 см
             });
-            
+        } else if ('onuserproximity' in window) {
+            console.log('userproximity API доступен');
             window.addEventListener('userproximity', (event) => {
+                console.log('userproximity event:', event.near);
                 this.handleProximityChange(event.near);
             });
+        } else if ('AmbientLightSensor' in window) {
+            console.log('AmbientLightSensor доступен, используем его');
+            this.setupAmbientLightSensor();
         } else {
-            console.log('Датчик приближения не поддерживается, используем альтернативный метод');
+            console.log('Датчики приближения не поддерживаются, используем альтернативный метод');
+            this.setupAlternativeProximityDetection();
+        }
+    }
+
+    setupAmbientLightSensor() {
+        try {
+            const sensor = new AmbientLightSensor();
+            let lastLightLevel = null;
+            let isNearEar = false;
+            
+            sensor.addEventListener('reading', () => {
+                const currentLight = sensor.illuminance;
+                
+                if (lastLightLevel !== null) {
+                    // Если свет резко уменьшился (телефон поднесен к уху)
+                    if (currentLight < lastLightLevel * 0.3 && currentLight < 10) {
+                        if (!isNearEar) {
+                            console.log('Обнаружено приближение к уху (свет уменьшился)');
+                            isNearEar = true;
+                            this.handleProximityChange(true);
+                        }
+                    }
+                    // Если свет увеличился (телефон убран от уха)
+                    else if (currentLight > lastLightLevel * 2 && currentLight > 20) {
+                        if (isNearEar) {
+                            console.log('Обнаружено отдаление от уха (свет увеличился)');
+                            isNearEar = false;
+                            this.handleProximityChange(false);
+                        }
+                    }
+                }
+                
+                lastLightLevel = currentLight;
+            });
+            
+            sensor.start();
+            console.log('AmbientLightSensor запущен');
+        } catch (error) {
+            console.log('Ошибка запуска AmbientLightSensor:', error);
             this.setupAlternativeProximityDetection();
         }
     }
@@ -80,9 +136,60 @@ class AudioConference {
     }
 
     setupAlternativeProximityDetection() {
-        // Альтернативный метод для устройств без датчика приближения
+        console.log('Настройка альтернативного метода обнаружения приближения');
+        
+        // Используем ориентацию устройства и акселерометр
+        if ('DeviceOrientationEvent' in window) {
+            this.setupOrientationDetection();
+        } else {
+            this.setupTouchDetection();
+        }
+    }
+
+    setupOrientationDetection() {
+        let lastOrientation = null;
+        let isNearEar = false;
+        
+        window.addEventListener('deviceorientation', (event) => {
+            const currentOrientation = {
+                alpha: event.alpha,
+                beta: event.beta,
+                gamma: event.gamma
+            };
+            
+            if (lastOrientation) {
+                // Проверяем резкое изменение ориентации (телефон поднесен к уху)
+                const deltaAlpha = Math.abs(currentOrientation.alpha - lastOrientation.alpha);
+                const deltaBeta = Math.abs(currentOrientation.beta - lastOrientation.beta);
+                
+                // Если телефон повернулся в положение "к уху"
+                if (deltaBeta > 30 && currentOrientation.beta > 60 && currentOrientation.beta < 120) {
+                    if (!isNearEar) {
+                        console.log('Обнаружено приближение к уху (ориентация)');
+                        isNearEar = true;
+                        this.handleProximityChange(true);
+                    }
+                }
+                // Если телефон вернулся в обычное положение
+                else if (deltaBeta > 30 && (currentOrientation.beta < 30 || currentOrientation.beta > 150)) {
+                    if (isNearEar) {
+                        console.log('Обнаружено отдаление от уха (ориентация)');
+                        isNearEar = false;
+                        this.handleProximityChange(false);
+                    }
+                }
+            }
+            
+            lastOrientation = currentOrientation;
+        });
+        
+        console.log('Обнаружение по ориентации настроено');
+    }
+
+    setupTouchDetection() {
         let touchStartY = 0;
         let touchStartTime = 0;
+        let touchCount = 0;
         
         document.addEventListener('touchstart', (e) => {
             touchStartY = e.touches[0].clientY;
@@ -97,9 +204,22 @@ class AudioConference {
             
             // Если касание было коротким и в верхней части экрана
             if (touchDuration < 500 && touchDistance < 50 && touchStartY < 200) {
-                this.toggleAudioOutput();
+                touchCount++;
+                
+                // Двойное касание в верхней части экрана = переключение
+                if (touchCount === 2) {
+                    this.toggleAudioOutput();
+                    touchCount = 0;
+                }
+                
+                // Сброс счетчика через 1 секунду
+                setTimeout(() => {
+                    touchCount = 0;
+                }, 1000);
             }
         });
+        
+        console.log('Обнаружение по касанию настроено');
     }
 
     async switchToEarpiece() {
@@ -121,7 +241,6 @@ class AudioConference {
             if (earpiece) {
                 await this.setAudioSinkForAllParticipants(earpiece.deviceId);
                 this.currentAudioSink = 'earpiece';
-                this.updateAudioOutputButton();
                 this.dimScreen(true);
                 console.log('Переключились на разговорный динамик:', earpiece.label);
             } else {
@@ -129,7 +248,6 @@ class AudioConference {
                 if (audioOutputs.length > 0) {
                     await this.setAudioSinkForAllParticipants(audioOutputs[0].deviceId);
                     this.currentAudioSink = 'earpiece';
-                    this.updateAudioOutputButton();
                     this.dimScreen(true);
                 }
             }
@@ -153,7 +271,6 @@ class AudioConference {
             if (speaker) {
                 await this.setAudioSinkForAllParticipants(speaker.deviceId);
                 this.currentAudioSink = 'speaker';
-                this.updateAudioOutputButton();
                 this.dimScreen(false);
                 console.log('Переключились на обычный динамик:', speaker.label);
             }
@@ -184,20 +301,6 @@ class AudioConference {
         }
     }
 
-    updateAudioOutputButton() {
-        const icon = this.audioOutputBtn.querySelector('.icon');
-        const text = this.audioOutputBtn.querySelector('.text');
-        
-        if (this.currentAudioSink === 'earpiece') {
-            icon.textContent = '📞';
-            text.textContent = 'Наушник';
-            this.audioOutputBtn.classList.add('active');
-        } else {
-            icon.textContent = '🔊';
-            text.textContent = 'Динамик';
-            this.audioOutputBtn.classList.remove('active');
-        }
-    }
 
     dimScreen(shouldDim) {
         // Создаем или находим элемент затемнения
@@ -261,7 +364,6 @@ class AudioConference {
             
             if (defaultDevice) {
                 this.currentAudioSink = 'speaker';
-                this.updateAudioOutputButton();
                 console.log('Установлено аудио устройство по умолчанию:', defaultDevice.label);
             }
         } catch (error) {
