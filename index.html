@@ -3,22 +3,27 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Аудио Конференция</title>
+    <title>Онлайн переговорная</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>🎤 Аудио Конференция</h1>
-            <p>Простое приложение для групповых разговоров</p>
+            <h1>Онлайн переговорная</h1>
         </header>
 
         <div class="main-content">
             <div class="room-section">
                 <h2>Подключение к комнате</h2>
                 <div class="input-group">
-                    <input type="text" id="roomId" placeholder="Введите ID комнаты" value="room1">
-                    <input type="text" id="userName" placeholder="Ваше имя" value="Пользователь">
+                    <div class="input-field">
+                        <label for="roomId">Название комнаты</label>
+                        <input type="text" id="roomId" placeholder="Введите название комнаты" value="room1">
+                    </div>
+                    <div class="input-field">
+                        <label for="userName">Имя пользователя</label>
+                        <input type="text" id="userName" placeholder="Введите ваше имя" value="Пользователь">
+                    </div>
                     <button id="joinRoom" class="btn btn-primary">Присоединиться</button>
                 </div>
             </div>
