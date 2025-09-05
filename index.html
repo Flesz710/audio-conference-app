@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Аудио Конференция</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎤 Аудио Конференция</h1>
+            <p>Простое приложение для групповых разговоров</p>
+        </header>
+
+        <div class="main-content">
+            <div class="room-section">
+                <h2>Подключение к комнате</h2>
+                <div class="input-group">
+                    <input type="text" id="roomId" placeholder="Введите ID комнаты" value="room1">
+                    <input type="text" id="userName" placeholder="Ваше имя" value="Пользователь">
+                    <button id="joinRoom" class="btn btn-primary">Присоединиться</button>
+                </div>
+            </div>
+
+            <div class="conference-section" id="conferenceSection" style="display: none;">
+                <h2>Конференция: <span id="currentRoom"></span></h2>
+                
+                <div class="participants" id="participants">
+                    <!-- Участники будут добавлены динамически -->
+                </div>
+
+                <div class="controls">
+                    <button id="muteBtn" class="btn btn-control">
+                        <span class="icon">🎤</span>
+                        <span class="text">Выключить микрофон</span>
+                    </button>
+                    <button id="leaveBtn" class="btn btn-danger">
+                        <span class="icon">📞</span>
+                        <span class="text">Покинуть конференцию</span>
+                    </button>
+                </div>
+
+                <div class="status" id="status">
+                    <span class="status-indicator"></span>
+                    <span class="status-text">Подключение...</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>
