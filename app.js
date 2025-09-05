@@ -108,18 +108,30 @@ class AudioConference {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const audioOutputs = devices.filter(device => device.kind === 'audiooutput');
             
+            console.log('Доступные устройства для переключения:', audioOutputs.map(d => d.label));
+            
             // Ищем разговорный динамик
             const earpiece = audioOutputs.find(device => 
                 device.label.toLowerCase().includes('earpiece') ||
                 device.label.toLowerCase().includes('receiver') ||
-                device.label.toLowerCase().includes('phone')
+                device.label.toLowerCase().includes('phone') ||
+                device.label.toLowerCase().includes('call')
             );
             
             if (earpiece) {
                 await this.setAudioSinkForAllParticipants(earpiece.deviceId);
                 this.currentAudioSink = 'earpiece';
                 this.updateAudioOutputButton();
-                console.log('Переключились на разговорный динамик');
+                this.dimScreen(true);
+                console.log('Переключились на разговорный динамик:', earpiece.label);
+            } else {
+                console.log('Разговорный динамик не найден, используем первое доступное устройство');
+                if (audioOutputs.length > 0) {
+                    await this.setAudioSinkForAllParticipants(audioOutputs[0].deviceId);
+                    this.currentAudioSink = 'earpiece';
+                    this.updateAudioOutputButton();
+                    this.dimScreen(true);
+                }
             }
         } catch (error) {
             console.log('Ошибка переключения на разговорный динамик:', error);
@@ -142,7 +154,8 @@ class AudioConference {
                 await this.setAudioSinkForAllParticipants(speaker.deviceId);
                 this.currentAudioSink = 'speaker';
                 this.updateAudioOutputButton();
-                console.log('Переключились на обычный динамик');
+                this.dimScreen(false);
+                console.log('Переключились на обычный динамик:', speaker.label);
             }
         } catch (error) {
             console.log('Ошибка переключения на обычный динамик:', error);
@@ -183,6 +196,76 @@ class AudioConference {
             icon.textContent = '🔊';
             text.textContent = 'Динамик';
             this.audioOutputBtn.classList.remove('active');
+        }
+    }
+
+    dimScreen(shouldDim) {
+        // Создаем или находим элемент затемнения
+        let dimOverlay = document.getElementById('dim-overlay');
+        
+        if (shouldDim) {
+            if (!dimOverlay) {
+                dimOverlay = document.createElement('div');
+                dimOverlay.id = 'dim-overlay';
+                dimOverlay.style.cssText = `
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100%;
+                    height: 100%;
+                    background: rgba(0, 0, 0, 0.8);
+                    z-index: 9999;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: white;
+                    font-size: 24px;
+                    font-weight: bold;
+                    transition: opacity 0.3s ease;
+                `;
+                dimOverlay.innerHTML = '📞 Разговор';
+                document.body.appendChild(dimOverlay);
+            }
+            dimOverlay.style.display = 'flex';
+            dimOverlay.style.opacity = '1';
+            
+            // Блокируем взаимодействие с экраном
+            document.body.style.overflow = 'hidden';
+        } else {
+            if (dimOverlay) {
+                dimOverlay.style.opacity = '0';
+                setTimeout(() => {
+                    if (dimOverlay) {
+                        dimOverlay.style.display = 'none';
+                    }
+                }, 300);
+            }
+            
+            // Разблокируем взаимодействие с экраном
+            document.body.style.overflow = '';
+        }
+    }
+
+    async initializeDefaultAudio() {
+        try {
+            const devices = await navigator.mediaDevices.enumerateDevices();
+            const audioOutputs = devices.filter(device => device.kind === 'audiooutput');
+            
+            console.log('Инициализация аудио по умолчанию. Доступные устройства:', audioOutputs.map(d => d.label));
+            
+            // Устанавливаем устройство по умолчанию (обычный динамик)
+            const defaultDevice = audioOutputs.find(device => 
+                device.label.toLowerCase().includes('speaker') ||
+                device.label.toLowerCase().includes('default')
+            ) || audioOutputs[0];
+            
+            if (defaultDevice) {
+                this.currentAudioSink = 'speaker';
+                this.updateAudioOutputButton();
+                console.log('Установлено аудио устройство по умолчанию:', defaultDevice.label);
+            }
+        } catch (error) {
+            console.log('Ошибка инициализации аудио по умолчанию:', error);
         }
     }
 
@@ -286,6 +369,9 @@ class AudioConference {
             // Присоединяемся к комнате
             this.socket.emit('join-room', { roomId, userName });
             this.updateStatus('connected', 'Микрофон подключен');
+            
+            // Инициализируем аудио устройство по умолчанию
+            this.initializeDefaultAudio();
             
         } catch (error) {
             console.error('Ошибка доступа к микрофону:', error);
@@ -513,12 +599,8 @@ class AudioConference {
             audioElement.srcObject = stream;
             audioElement.volume = 1.0; // Устанавливаем максимальную громкость
             
-            // Настройка для автоматического переключения на наушники
-            audioElement.setSinkId = audioElement.setSinkId || audioElement.webkitSetSinkId;
-            if (audioElement.setSinkId) {
-                // Пытаемся переключиться на наушники если доступны
-                this.setupAudioSink(audioElement);
-            }
+            // НЕ переключаем автоматически - только по запросу пользователя
+            // audioElement.setSinkId = audioElement.setSinkId || audioElement.webkitSetSinkId;
             
             // Настройка для обнаружения речи и предотвращения эха
             this.setupAudioDetection(audioElement, userId);
@@ -627,6 +709,8 @@ class AudioConference {
             const devices = await navigator.mediaDevices.enumerateDevices();
             const audioOutputs = devices.filter(device => device.kind === 'audiooutput');
             
+            console.log('Доступные аудио устройства:', audioOutputs.map(d => d.label));
+            
             // Ищем разговорный динамик (earpiece) - приоритет для мобильных устройств
             const earpiece = audioOutputs.find(device => 
                 device.label.toLowerCase().includes('earpiece') ||
@@ -648,6 +732,8 @@ class AudioConference {
             if (preferredDevice && audioElement.setSinkId) {
                 await audioElement.setSinkId(preferredDevice.deviceId);
                 console.log('Переключились на:', preferredDevice.label);
+            } else {
+                console.log('setSinkId не поддерживается или устройство не найдено');
             }
         } catch (error) {
             console.log('Не удалось переключиться на аудио устройство:', error);
