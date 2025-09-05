@@ -104,6 +104,7 @@ class AudioConference {
 
         try {
             // Получаем доступ к микрофону
+            console.log('Запрашиваем доступ к микрофону...');
             this.localStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
@@ -112,13 +113,33 @@ class AudioConference {
                 }
             });
 
+            console.log('Микрофон получен:', this.localStream);
+            console.log('Аудио треки:', this.localStream.getAudioTracks());
+
+            // Проверяем, что микрофон работает
+            const audioTracks = this.localStream.getAudioTracks();
+            if (audioTracks.length === 0) {
+                throw new Error('Микрофон не найден');
+            }
+
             // Присоединяемся к комнате
             this.socket.emit('join-room', { roomId, userName });
+            this.updateStatus('connected', 'Микрофон подключен');
             
         } catch (error) {
             console.error('Ошибка доступа к микрофону:', error);
             this.updateStatus('disconnected', 'Ошибка доступа к микрофону');
-            alert('Не удалось получить доступ к микрофону. Проверьте разрешения.');
+            
+            let errorMessage = 'Не удалось получить доступ к микрофону. ';
+            if (error.name === 'NotAllowedError') {
+                errorMessage += 'Разрешите доступ к микрофону в настройках браузера.';
+            } else if (error.name === 'NotFoundError') {
+                errorMessage += 'Микрофон не найден.';
+            } else {
+                errorMessage += 'Проверьте настройки микрофона.';
+            }
+            
+            alert(errorMessage);
         }
     }
 
@@ -142,7 +163,9 @@ class AudioConference {
 
         // Обработка входящих потоков
         peerConnection.ontrack = (event) => {
+            console.log('Получен удаленный поток от:', userId);
             const [remoteStream] = event.streams;
+            console.log('Удаленный поток:', remoteStream);
             this.updateParticipantAudio(userId, remoteStream);
         };
 
@@ -258,9 +281,26 @@ class AudioConference {
     }
 
     updateParticipantAudio(userId, stream) {
+        console.log('Обновляем аудио для участника:', userId);
         const audioElement = document.getElementById(`audio-${userId}`);
         if (audioElement) {
             audioElement.srcObject = stream;
+            console.log('Аудио элемент обновлен:', audioElement);
+            
+            // Добавляем обработчики для отладки
+            audioElement.onloadedmetadata = () => {
+                console.log('Метаданные аудио загружены для:', userId);
+            };
+            
+            audioElement.oncanplay = () => {
+                console.log('Аудио готово к воспроизведению для:', userId);
+            };
+            
+            audioElement.onerror = (error) => {
+                console.error('Ошибка воспроизведения аудио для:', userId, error);
+            };
+        } else {
+            console.error('Аудио элемент не найден для участника:', userId);
         }
     }
 
