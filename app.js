@@ -8,6 +8,7 @@ class AudioConference {
         this.isMuted = false;
         this.isNearEar = false;
         this.currentAudioSink = null;
+        this.isSpeakerMode = false; // false = разговорный динамик, true = громкая связь
         
         this.initializeElements();
         this.setupEventListeners();
@@ -23,6 +24,7 @@ class AudioConference {
         this.currentRoomSpan = document.getElementById('currentRoom');
         this.participantsDiv = document.getElementById('participants');
         this.muteBtn = document.getElementById('muteBtn');
+        this.speakerBtn = document.getElementById('speakerBtn');
         this.leaveBtn = document.getElementById('leaveBtn');
         this.statusIndicator = document.querySelector('.status-indicator');
         this.statusText = document.querySelector('.status-text');
@@ -31,6 +33,7 @@ class AudioConference {
     setupEventListeners() {
         this.joinRoomBtn.addEventListener('click', () => this.joinRoom());
         this.muteBtn.addEventListener('click', () => this.toggleMute());
+        this.speakerBtn.addEventListener('click', () => this.toggleSpeaker());
         this.leaveBtn.addEventListener('click', () => this.leaveRoom());
 
         // Enter для присоединения к комнате
@@ -120,17 +123,27 @@ class AudioConference {
     }
 
     handleProximityChange(isNear) {
-        console.log('Изменение приближения:', isNear);
+        console.log('Изменение приближения:', isNear, 'Режим громкой связи:', this.isSpeakerMode);
         
         if (isNear !== this.isNearEar) {
             this.isNearEar = isNear;
             
-            if (isNear) {
-                // Телефон поднесен к уху - переключаемся на разговорный динамик
-                this.switchToEarpiece();
+            // Переключаем только если НЕ в режиме громкой связи
+            if (!this.isSpeakerMode) {
+                if (isNear) {
+                    // Телефон поднесен к уху - переключаемся на разговорный динамик
+                    this.switchToEarpiece();
+                } else {
+                    // Телефон убран от уха - переключаемся на обычный динамик
+                    this.switchToSpeaker();
+                }
             } else {
-                // Телефон убран от уха - переключаемся на обычный динамик
-                this.switchToSpeaker();
+                // В режиме громкой связи только затемняем/освещаем экран
+                if (isNear) {
+                    this.dimScreen(true);
+                } else {
+                    this.dimScreen(false);
+                }
             }
         }
     }
@@ -293,11 +306,33 @@ class AudioConference {
         }
     }
 
-    toggleAudioOutput() {
-        if (this.currentAudioSink === 'earpiece') {
+    toggleSpeaker() {
+        this.isSpeakerMode = !this.isSpeakerMode;
+        console.log('Переключение режима громкой связи:', this.isSpeakerMode);
+        
+        if (this.isSpeakerMode) {
+            // Включаем громкую связь - переключаемся на обычный динамик
             this.switchToSpeaker();
+            this.updateSpeakerButton();
         } else {
+            // Выключаем громкую связь - переключаемся на разговорный динамик
             this.switchToEarpiece();
+            this.updateSpeakerButton();
+        }
+    }
+
+    updateSpeakerButton() {
+        const icon = this.speakerBtn.querySelector('.icon');
+        const text = this.speakerBtn.querySelector('.text');
+        
+        if (this.isSpeakerMode) {
+            icon.textContent = '🔊';
+            text.textContent = 'Громкая связь';
+            this.speakerBtn.classList.add('active');
+        } else {
+            icon.textContent = '📞';
+            text.textContent = 'Громкая связь';
+            this.speakerBtn.classList.remove('active');
         }
     }
 
@@ -356,16 +391,27 @@ class AudioConference {
             
             console.log('Инициализация аудио по умолчанию. Доступные устройства:', audioOutputs.map(d => d.label));
             
-            // Устанавливаем устройство по умолчанию (обычный динамик)
-            const defaultDevice = audioOutputs.find(device => 
-                device.label.toLowerCase().includes('speaker') ||
-                device.label.toLowerCase().includes('default')
-            ) || audioOutputs[0];
+            // По умолчанию устанавливаем разговорный динамик (не громкую связь)
+            const earpiece = audioOutputs.find(device => 
+                device.label.toLowerCase().includes('earpiece') ||
+                device.label.toLowerCase().includes('phone') ||
+                device.label.toLowerCase().includes('call')
+            );
             
-            if (defaultDevice) {
-                this.currentAudioSink = 'speaker';
-                console.log('Установлено аудио устройство по умолчанию:', defaultDevice.label);
+            if (earpiece) {
+                this.currentAudioSink = 'earpiece';
+                console.log('Установлен разговорный динамик по умолчанию:', earpiece.label);
+            } else {
+                // Если разговорный динамик не найден, используем первое доступное устройство
+                const defaultDevice = audioOutputs[0];
+                if (defaultDevice) {
+                    this.currentAudioSink = 'earpiece';
+                    console.log('Установлено первое доступное аудио устройство:', defaultDevice.label);
+                }
             }
+            
+            // Обновляем кнопку громкой связи
+            this.updateSpeakerButton();
         } catch (error) {
             console.log('Ошибка инициализации аудио по умолчанию:', error);
         }
@@ -882,6 +928,17 @@ class AudioConference {
                 this.localStream.getTracks().forEach(track => track.stop());
                 this.localStream = null;
             }
+
+            // Сбрасываем состояние
+            this.isMuted = false;
+            this.isSpeakerMode = false;
+            this.isNearEar = false;
+            this.currentAudioSink = null;
+            this.updateMuteButton();
+            this.updateSpeakerButton();
+            
+            // Убираем затемнение экрана
+            this.dimScreen(false);
 
             // Покидаем комнату
             this.socket.emit('leave-room');
