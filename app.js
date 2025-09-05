@@ -172,11 +172,23 @@ class AudioConference {
         // Обработка ICE кандидатов
         peerConnection.onicecandidate = (event) => {
             if (event.candidate) {
+                console.log('Отправляем ICE кандидат для:', userId);
                 this.socket.emit('ice-candidate', {
                     target: userId,
                     candidate: event.candidate
                 });
+            } else {
+                console.log('ICE gathering завершен для:', userId);
             }
+        };
+
+        // Отслеживание состояний соединения
+        peerConnection.onconnectionstatechange = () => {
+            console.log('Состояние соединения для', userId, ':', peerConnection.connectionState);
+        };
+
+        peerConnection.oniceconnectionstatechange = () => {
+            console.log('ICE состояние для', userId, ':', peerConnection.iceConnectionState);
         };
 
         // Создаем offer для нового пользователя
@@ -194,27 +206,52 @@ class AudioConference {
     }
 
     async handleOffer(offer, senderId) {
-        const peerConnection = this.peerConnections.get(senderId);
+        console.log('Обрабатываем offer от:', senderId);
+        let peerConnection = this.peerConnections.get(senderId);
+        
         if (!peerConnection) {
+            console.log('Создаем новое peer connection для:', senderId);
             await this.createPeerConnection(senderId);
+            peerConnection = this.peerConnections.get(senderId);
         }
 
-        const pc = this.peerConnections.get(senderId);
-        await pc.setRemoteDescription(offer);
+        try {
+            // Проверяем состояние соединения
+            if (peerConnection.signalingState === 'stable') {
+                console.log('Устанавливаем remote description для:', senderId);
+                await peerConnection.setRemoteDescription(offer);
 
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
+                const answer = await peerConnection.createAnswer();
+                await peerConnection.setLocalDescription(answer);
 
-        this.socket.emit('answer', {
-            target: senderId,
-            answer: answer
-        });
+                this.socket.emit('answer', {
+                    target: senderId,
+                    answer: answer
+                });
+                console.log('Отправлен answer для:', senderId);
+            } else {
+                console.log('Пропускаем offer - неподходящее состояние:', peerConnection.signalingState);
+            }
+        } catch (error) {
+            console.error('Ошибка обработки offer:', error);
+        }
     }
 
     async handleAnswer(answer, senderId) {
+        console.log('Обрабатываем answer от:', senderId);
         const peerConnection = this.peerConnections.get(senderId);
         if (peerConnection) {
-            await peerConnection.setRemoteDescription(answer);
+            try {
+                // Проверяем состояние соединения
+                if (peerConnection.signalingState === 'have-local-offer') {
+                    console.log('Устанавливаем remote answer для:', senderId);
+                    await peerConnection.setRemoteDescription(answer);
+                } else {
+                    console.log('Пропускаем answer - неподходящее состояние:', peerConnection.signalingState);
+                }
+            } catch (error) {
+                console.error('Ошибка обработки answer:', error);
+            }
         }
     }
 
@@ -285,20 +322,36 @@ class AudioConference {
         const audioElement = document.getElementById(`audio-${userId}`);
         if (audioElement) {
             audioElement.srcObject = stream;
+            audioElement.volume = 1.0; // Устанавливаем максимальную громкость
             console.log('Аудио элемент обновлен:', audioElement);
             
             // Добавляем обработчики для отладки
             audioElement.onloadedmetadata = () => {
                 console.log('Метаданные аудио загружены для:', userId);
+                // Принудительно запускаем воспроизведение
+                audioElement.play().catch(error => {
+                    console.log('Автовоспроизведение заблокировано для:', userId, error);
+                });
             };
             
             audioElement.oncanplay = () => {
                 console.log('Аудио готово к воспроизведению для:', userId);
+                // Пытаемся запустить воспроизведение
+                audioElement.play().catch(error => {
+                    console.log('Не удалось запустить воспроизведение для:', userId, error);
+                });
             };
             
             audioElement.onerror = (error) => {
                 console.error('Ошибка воспроизведения аудио для:', userId, error);
             };
+
+            // Принудительно запускаем воспроизведение
+            setTimeout(() => {
+                audioElement.play().catch(error => {
+                    console.log('Отложенное воспроизведение не удалось для:', userId, error);
+                });
+            }, 1000);
         } else {
             console.error('Аудио элемент не найден для участника:', userId);
         }
